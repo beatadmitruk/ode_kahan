@@ -1,0 +1,184 @@
+#include <math.h>
+#include <omp.h>
+#include <openacc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+double acc_bvp_solve_col(double *u, int s, int r) {
+  int k, N = r * s;
+  double sum, y, e, tmp;
+  double x, t;
+  double h = 1.0 / ((double)N);
+  double h2 = h * h;
+  double c1 = M_PI * M_PI / 4;
+  double c2 = M_PI / 2;
+
+#pragma acc parallel present(u)
+  {
+#pragma acc loop independent
+    for (k = 0; k < N; k++) {
+      double x = (h * (double)(k));
+      u[k] = h2 * c1 * cos(c2 * x);
+    }
+  }
+#pragma acc parallel num_gangs(1) present(u)
+  {
+    u[0] *= 0.5;
+  }
+  double time = omp_get_wtime();
+
+
+#pragma acc parallel present(u)
+  {
+#pragma acc loop independent
+    for (int j = 0; j < r; j++) {
+      sum = u[j * s];
+      e = 0.0;
+      for (int k = 1; k < s; k++) {
+        x = u[j * s + k];
+        t = sum + x;
+        if (fabs(sum) >= fabs(x))
+          e += (sum - t) + x;
+        else
+          e += (x - t) + sum;
+        sum = t;
+        u[j * s + k] = sum + e;
+      }
+    }
+  }
+
+
+#pragma acc parallel num_gangs(1) present(u)
+  {
+    sum = u[s - 1];
+    e = 0.0;
+
+    for (int k = 1; k < r; k++) {
+      x = u[(k + 1) * s - 1];
+      t = sum + x;
+
+      if (fabs(sum) >= fabs(x))
+        e += (sum - t) + x;
+      else
+        e += (x - t) + sum;
+
+      sum = t;
+      u[(k + 1) * s - 1] = sum + e;
+    }
+  }
+
+
+#pragma acc parallel present(u)
+  {
+    for (int j = 1; j < r; j++) {
+      double a = u[j * s - 1];
+#pragma acc loop independent
+      for (int k = 0; k < s - 1; k++)
+        u[j * s + k] += a;
+    }
+  }
+
+
+#pragma acc parallel present(u)
+  {
+#pragma acc loop independent
+    for (int j = 0; j < r; j++) {
+      sum = u[(j + 1) * s - 1];
+      e = 0.0;
+
+      for (int k = s - 2; k >= 0; k--) {
+        x = u[j * s + k];
+        t = sum + x;
+
+        if (fabs(sum) >= fabs(x))
+          e += (sum - t) + x;
+        else
+          e += (x - t) + sum;
+
+        sum = t;
+        u[j * s + k] = sum + e;
+      }
+    }
+  }
+
+
+#pragma acc parallel num_gangs(1) present(u)
+  {
+    sum = u[(r - 1) * s];
+    e = 0.0;
+
+    for (int k = r - 2; k >= 0; k--) {
+      x = u[k * s];
+      t = sum + x;
+
+      if (fabs(sum) >= fabs(x))
+        e += (sum - t) + x;
+      else
+        e += (x - t) + sum;
+
+      sum = t;
+      u[k * s] = sum + e;
+    }
+  }
+
+
+#pragma acc parallel present(u)
+  {
+    for (int j = 0; j < r - 1; j++) {
+      double a = u[j * s + s];
+#pragma acc loop independent
+
+      for (int k = 1; k < s; k++)
+        u[j * s + k] += a;
+    }
+  }
+#pragma acc wait
+  return omp_get_wtime() - time;
+}
+
+double bvp_test_P1(double *f_h, int N) {
+  double c = M_PI / 2;
+  double h = 1.0 / ((double)N);
+  double diff = 0.0;
+  double sumw = 0.0;
+
+  for (int i = 0; i < N; i++) {
+    double x = (h * (double)i);
+    double y = cos(c * x);
+    diff += (f_h[i] - y) * (f_h[i] - y);
+    sumw += y * y;
+  }
+  return sqrt(diff) / sqrt(sumw);
+}
+
+int main(int argc, char **argv) {
+  int N, r, s;
+  s = atoi(argv[1]);
+  r = atoi(argv[2]);
+  N = s * r;
+
+  double time;
+
+  size_t size = N * sizeof(double);
+  double *u_col = (double *)malloc(size);
+
+  acc_init(acc_device_nvidia);
+
+#pragma acc data copy(u_col[0 : N])
+  {
+#pragma acc data present(u_col)
+    {
+
+      time = acc_bvp_solve_col(u_col, s, r);
+    }
+  }
+
+  if (strcmp(argv[argc - 1], "test") == 0)
+    printf("%.30lf", bvp_test_P1(u_col, N));
+  else
+    printf("%.6lf", time);
+  free(u_col);
+
+  return 0;
+}
