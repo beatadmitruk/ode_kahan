@@ -1,19 +1,38 @@
 cmake_minimum_required(VERSION 3.20)
-set(CMAKE_C_COMPILER /storage/opt/nvidia-2025-259/Linux_x86_64/2025/compilers/bin/nvc)
-set(CMAKE_CUDA_COMPILER /storage/opt/nvidia-2025-259/Linux_x86_64/2025/cuda/12.9/bin/nvcc)
+
+# ─── Konfigurowalne ścieżki ─────────────────────────────────────────────────
+set(GCC_TOOLCHAIN     "/usr"
+    CACHE PATH "Katalog gcc toolchain (--gcc-toolchain=)")
+set(ACC_INCLUDES      "/usr/lib/gcc/x86_64-pc-linux-gnu/13.3.1/include"
+    CACHE PATH "Include directory dla ACC (nvc)")
+set(GPU_ARCH          "cc70"
+    CACHE STRING "Architektura GPU dla nvc (cc70, cc80, cc86…)")
+
+set(CMAKE_C_COMPILER  "/opt/nvidia/hpc_sdk/Linux_x86_64/23.11/compilers/bin/nvc"
+    CACHE FILEPATH "Kompilator C (nvc)")
+set(CMAKE_CUDA_COMPILER "/opt/cuda/bin/nvcc"
+    CACHE FILEPATH "Kompilator CUDA (nvcc)")
+
+set(SYCL_COMPILER     "clang++"
+    CACHE FILEPATH "Kompilator SYCL")
+set(SYCL_CUDA_PATH    "/opt/cuda"
+    CACHE PATH "Katalog instalacji CUDA dla SYCL")
+set(SYCL_GPU_ARCH     "sm_70"
+    CACHE STRING "Architektura GPU dla SYCL (sm_70, sm_80…)")
+# ────────────────────────────────────────────────────────────────────────────
+
+set(CMAKE_C_FLAGS
+    "--gcc-toolchain=${GCC_TOOLCHAIN} -acc=gpu,multicore -gpu=${GPU_ARCH} -Mnofprelaxed -Mnofma"
+)
+
 project(ode_art LANGUAGES C CUDA)
 
-set(ACC_INCLUDES
-    /usr/lib/gcc/x86_64-redhat-linux/8/include
+set(ACC_COMPILE_FLAGS
+    "--gcc-toolchain=${GCC_TOOLCHAIN};-Kieee;-acc=multicore"
 )
-set(ACC_COMPILE_FLAGS "--gcc-toolchain=/usr;-Kieee;-acc=multicore")
-
-set(SYCL_COMPILER clang++)
-set(SYCL_CUDA_PATH /storage/opt/cuda/cuda-12.1)
-set(SYCL_GPU_ARCH sm_70)
 set(SYCL_FLAGS
     -fsycl
-    -fsycl-targets=nvptx64-nvidia-cuda,spir64
+    -fsycl-targets=nvptx64-nvidia-cuda
     --cuda-path=${SYCL_CUDA_PATH}
     -Xsycl-target-backend=nvptx64-nvidia-cuda
     --cuda-gpu-arch=${SYCL_GPU_ARCH}
@@ -44,6 +63,7 @@ function(add_sycl_executable name src)
     )
 endfunction()
 
+# --- C files ---
 file(GLOB C_FILES "*.c")
 foreach(src ${C_FILES})
     get_filename_component(name ${src} NAME_WE)
@@ -52,12 +72,14 @@ foreach(src ${C_FILES})
     endif()
 endforeach()
 
+# --- CUDA files ---
 file(GLOB CU_FILES "*.cu")
 foreach(src ${CU_FILES})
     get_filename_component(name ${src} NAME_WE)
     add_cuda_executable(${name} ${src})
 endforeach()
 
+# --- SYCL files (*.dp.cpp) ---
 file(GLOB DP_FILES "*.dp.cpp")
 foreach(src ${DP_FILES})
     get_filename_component(base ${src} NAME)
